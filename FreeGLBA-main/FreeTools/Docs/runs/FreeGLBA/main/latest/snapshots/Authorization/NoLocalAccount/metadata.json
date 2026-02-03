@@ -1,0 +1,20 @@
+{
+  "Route": "/Authorization/NoLocalAccount",
+  "Url": "https://localhost:7271/Authorization/NoLocalAccount",
+  "StatusCode": 200,
+  "FileSize": 22734,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": false,
+  "ConsoleErrors": [],
+  "CapturedAt": "2026-01-20T21:21:15.281366Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}

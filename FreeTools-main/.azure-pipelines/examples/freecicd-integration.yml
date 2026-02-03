@@ -1,0 +1,110 @@
+﻿# Example: Using FreeTools in a FreeCICD Pipeline
+#
+# This shows how to integrate freetools-test-template.yml into your 
+# existing build-and-deploy pipeline after the DEV deployment.
+#
+# Replace the playwright-screenshot-template.yml with freetools-test-template.yml
+#
+# Developed by Enrollment Information Technology (EIT) at Washington State University
+# https://em.wsu.edu/eit/meet-our-staff/
+
+# In your build-and-deploy.yml, replace:
+#
+#   - template: Templates/playwright-screenshot-template.yml@TemplateRepo
+#     parameters:
+#       testUrl: "https://azuredev.em.wsu.edu/FreeCICD"
+#       baseImageName: "playwright-dotnet-pwsh"
+#       ...
+#
+# With:
+#
+#   - template: Templates/freetools-test-template.yml@TemplateRepo
+#     parameters:
+#       projectName: "$(CI_ProjectName)"
+#       testUrl: "https://azuredev.em.wsu.edu/$(CI_DEV_VirtualPath)"
+#       sourceArtifactName: "$(CI_ProjectName).SourceSnapshot"
+#       dependsOn:
+#         - DeployDEVStage
+
+# ============================================================================
+# FULL EXAMPLE: build-and-deploy.yml with FreeTools
+# ============================================================================
+
+name: '$(Date:yyyyMMdd)$(Rev:.r)'
+
+resources:
+  repositories:
+    - repository: TemplateRepo
+      type: git
+      name: 'ReleasePipelines/ReleasePipelines'
+      ref: 'refs/heads/main'
+      trigger: none
+    - repository: BuildRepo
+      type: git
+      name: 'FreeCICD/FreeCICD'
+      ref: 'refs/heads/main'
+      trigger:
+        branches:
+          include:
+            - main
+
+variables:
+  - template: Templates/common-variables.yml@TemplateRepo
+
+  - name: CI_ProjectName
+    value: "FreeCICD"
+  - name: CI_BUILD_CsProjectPath
+    value: "FreeCICD/FreeCICD.csproj"
+  - name: CI_BUILD_Namespace
+    value: "FreeCICD.Server"
+  # ... (rest of your variables)
+
+pool:
+  name: 'BuildVM'
+
+stages:
+  # ... (PreBuildStage, GatherIIS stages, BuildStage, InfoStage as before)
+
+  # -------------------------------------------------------------------
+  # Deploy to DEV Stage (same as before)
+  # -------------------------------------------------------------------
+  - stage: DeployDEVStage
+    displayName: "Deploy to DEV"
+    dependsOn: InfoStage
+    # ... (your existing deploy config)
+
+  # -------------------------------------------------------------------
+  # FreeTools Analysis - REPLACES playwright-screenshot-template
+  # -------------------------------------------------------------------
+  - template: Templates/freetools-test-template.yml@TemplateRepo
+    parameters:
+      projectName: "$(CI_ProjectName)"
+      testUrl: "https://azuredev.em.wsu.edu/FreeCICD"
+      sourceArtifactName: "$(CI_ProjectName).SourceSnapshot"
+      stageName: "FreeToolsDevTest"
+      stageDisplayName: "FreeTools Analysis (DEV)"
+      dependsOn:
+        - DeployDEVStage
+      # Optional: provide test credentials for auth pages
+      # testCredentials: '{"email": "$(TestEmail)", "password": "$(TestPassword)"}'
+
+  # -------------------------------------------------------------------
+  # Deploy to PROD Stage (same as before)
+  # -------------------------------------------------------------------
+  - stage: DeployPRODStage
+    displayName: "Deploy to PROD"
+    dependsOn: InfoStage
+    # ... (your existing deploy config)
+
+  # -------------------------------------------------------------------
+  # Optional: FreeTools Analysis for PROD too
+  # -------------------------------------------------------------------
+  # - template: Templates/freetools-test-template.yml@TemplateRepo
+  #   parameters:
+  #     projectName: "$(CI_ProjectName)"
+  #     testUrl: "https://prod.em.wsu.edu/FreeCICD"
+  #     sourceArtifactName: "$(CI_ProjectName).SourceSnapshot"
+  #     stageName: "FreeToolsProdTest"
+  #     stageDisplayName: "FreeTools Analysis (PROD)"
+  #     dependsOn:
+  #       - DeployPRODStage

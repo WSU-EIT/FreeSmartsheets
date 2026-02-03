@@ -1,0 +1,20 @@
+{
+  "Route": "/DataSubjects",
+  "Url": "https://localhost:7271/DataSubjects",
+  "StatusCode": 200,
+  "FileSize": 19790,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": false,
+  "ConsoleErrors": [],
+  "CapturedAt": "2026-01-20T21:21:02.1332902Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}

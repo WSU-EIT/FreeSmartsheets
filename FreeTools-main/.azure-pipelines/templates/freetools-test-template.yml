@@ -1,0 +1,425 @@
+﻿# freetools-test-template.yml
+# 
+# FreeTools Analysis Template for FreeCICD
+# Runs after deployment to analyze code and capture screenshots from the live site.
+#
+# This template:
+#   1. Downloads the source snapshot artifact (created by build-template.yml)
+#   2. Extracts the code
+#   3. Clones FreeTools
+#   4. Runs analysis tools against extracted code
+#   5. Captures screenshots from the deployed URL
+#   6. Generates a comprehensive report
+#   7. Publishes results as pipeline artifacts
+#
+# Usage:
+#   - template: Templates/freetools-test-template.yml@TemplateRepo
+#     parameters:
+#       projectName: "$(CI_ProjectName)"
+#       testUrl: "https://azuredev.em.wsu.edu/MyApp"
+#       sourceArtifactName: "$(CI_ProjectName).SourceSnapshot"
+#
+# Developed by Enrollment Information Technology (EIT) at Washington State University
+# https://em.wsu.edu/eit/meet-our-staff/
+# https://github.com/WSU-EIT/FreeTools
+
+parameters:
+  # Required: Project name (used for report naming)
+  - name: projectName
+    type: string
+    
+  # Required: URL of the deployed site to test/screenshot
+  - name: testUrl
+    type: string
+    
+  # Required: Name of the source snapshot artifact from build-template
+  # Format: "{ProjectName}.SourceSnapshot"
+  - name: sourceArtifactName
+    type: string
+    default: ''
+    
+  # Optional: Pool name for the job
+  - name: poolName
+    type: string
+    default: 'BuildVM'
+    
+  # Optional: Stage name
+  - name: stageName
+    type: string
+    default: 'FreeToolsTestStage'
+    
+  # Optional: Stage display name
+  - name: stageDisplayName
+    type: string
+    default: 'FreeTools Analysis'
+    
+  # Optional: Depends on stages (comma-separated)
+  - name: dependsOn
+    type: object
+    default: []
+    
+  # Optional: Max parallel browser instances for screenshots
+  - name: maxThreads
+    type: number
+    default: 5
+    
+  # Optional: Page settle delay for SPA rendering (ms)
+  - name: pageSettleDelayMs
+    type: number
+    default: 3000
+    
+  # Optional: Skip screenshots (code analysis only)
+  - name: skipScreenshots
+    type: boolean
+    default: false
+    
+  # Optional: Test credentials for auth pages (JSON)
+  # Example: '{"email": "test@test.com", "password": "Test123!"}'
+  - name: testCredentials
+    type: string
+    default: ''
+    
+  # Optional: FreeTools repo URL (for custom forks)
+  - name: freetoolsRepo
+    type: string
+    default: 'https://github.com/WSU-EIT/FreeTools.git'
+    
+  # Optional: FreeTools branch
+  - name: freetoolsBranch
+    type: string
+    default: 'main'
+
+stages:
+  - stage: ${{ parameters.stageName }}
+    displayName: ${{ parameters.stageDisplayName }}
+    dependsOn: ${{ parameters.dependsOn }}
+    jobs:
+      - job: FreeToolsAnalysis
+        displayName: 'Analyze Code & Capture Screenshots'
+        pool:
+          name: ${{ parameters.poolName }}
+        
+        variables:
+          SourceArtifact: ${{ coalesce(parameters.sourceArtifactName, format('{0}.SourceSnapshot', parameters.projectName)) }}
+          FreeToolsDir: '$(Agent.TempDirectory)/FreeTools'
+          ExtractDir: '$(Agent.TempDirectory)/source'
+          OutputDir: '$(Build.ArtifactStagingDirectory)/freetools-report'
+          
+        steps:
+          # ============================================================
+          # Phase 0: Setup
+          # ============================================================
+          - checkout: none
+          
+          - task: PowerShell@2
+            displayName: 'Display FreeTools Configuration'
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host "=============================================="
+                Write-Host "  FreeTools Analysis Configuration"
+                Write-Host "=============================================="
+                Write-Host ""
+                Write-Host "Project:          ${{ parameters.projectName }}"
+                Write-Host "Test URL:         ${{ parameters.testUrl }}"
+                Write-Host "Source Artifact:  $(SourceArtifact)"
+                Write-Host "Max Threads:      ${{ parameters.maxThreads }}"
+                Write-Host "Page Settle (ms): ${{ parameters.pageSettleDelayMs }}"
+                Write-Host "Skip Screenshots: ${{ parameters.skipScreenshots }}"
+                Write-Host ""
+                Write-Host "Directories:"
+                Write-Host "  Extract:  $(ExtractDir)"
+                Write-Host "  Output:   $(OutputDir)"
+                Write-Host "  Tools:    $(FreeToolsDir)"
+                Write-Host "=============================================="
+
+          # ============================================================
+          # Phase 1: Download and Extract Source Snapshot
+          # ============================================================
+          - task: DownloadBuildArtifacts@1
+            displayName: 'Download Source Snapshot'
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: '$(SourceArtifact)'
+              downloadPath: '$(Agent.TempDirectory)/artifacts'
+
+          - task: PowerShell@2
+            displayName: 'Extract Source Snapshot'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $artifactDir = "$(Agent.TempDirectory)/artifacts/$(SourceArtifact)"
+                $extractDir = "$(ExtractDir)"
+                
+                # Find the source zip
+                $sourceZip = Get-ChildItem -Path $artifactDir -Filter "*.source.*.zip" | Select-Object -First 1
+                
+                if (-not $sourceZip) {
+                  Write-Error "Source snapshot zip not found in $artifactDir"
+                  Get-ChildItem -Path $artifactDir -Recurse | Format-Table Name, Length
+                  exit 1
+                }
+                
+                Write-Host "Found source zip: $($sourceZip.FullName)"
+                Write-Host "Extracting to: $extractDir"
+                
+                # Create extract directory
+                New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+                
+                # Extract
+                Expand-Archive -Path $sourceZip.FullName -DestinationPath $extractDir -Force
+                
+                Write-Host ""
+                Write-Host "Extracted contents:"
+                Get-ChildItem -Path $extractDir | Format-Table Name, Length
+                
+                # Find the main project directory (look for .csproj)
+                $csproj = Get-ChildItem -Path $extractDir -Filter "*.csproj" -Recurse | Select-Object -First 1
+                if ($csproj) {
+                  $projectDir = $csproj.DirectoryName
+                  Write-Host ""
+                  Write-Host "Main project directory: $projectDir"
+                  Write-Host "##vso[task.setvariable variable=ProjectSourceDir]$projectDir"
+                } else {
+                  Write-Host "##vso[task.setvariable variable=ProjectSourceDir]$extractDir"
+                }
+
+          # ============================================================
+          # Phase 2: Clone and Build FreeTools
+          # ============================================================
+          - task: PowerShell@2
+            displayName: 'Clone FreeTools'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $freetoolsDir = "$(FreeToolsDir)"
+                
+                if (Test-Path $freetoolsDir) {
+                  Remove-Item -Path $freetoolsDir -Recurse -Force
+                }
+                
+                Write-Host "Cloning FreeTools from ${{ parameters.freetoolsRepo }}..."
+                git clone --depth 1 --branch ${{ parameters.freetoolsBranch }} ${{ parameters.freetoolsRepo }} $freetoolsDir
+                
+                if ($LASTEXITCODE -ne 0) {
+                  Write-Error "Failed to clone FreeTools"
+                  exit 1
+                }
+                
+                Write-Host "FreeTools cloned successfully"
+                Get-ChildItem -Path "$freetoolsDir/FreeTools" | Format-Table Name
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore FreeTools'
+            inputs:
+              command: 'restore'
+              projects: '$(FreeToolsDir)/FreeTools/**/*.csproj'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build FreeTools'
+            inputs:
+              command: 'build'
+              projects: '$(FreeToolsDir)/FreeTools/**/*.csproj'
+              arguments: '--configuration Release --no-restore'
+
+          # ============================================================
+          # Phase 3: Run Code Analysis Tools
+          # ============================================================
+          - task: PowerShell@2
+            displayName: 'Create Output Directory'
+            inputs:
+              targetType: 'inline'
+              script: |
+                New-Item -ItemType Directory -Path "$(OutputDir)" -Force | Out-Null
+                New-Item -ItemType Directory -Path "$(OutputDir)/snapshots" -Force | Out-Null
+                Write-Host "Output directory created: $(OutputDir)"
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Run WorkspaceInventory'
+            inputs:
+              command: 'run'
+              projects: '$(FreeToolsDir)/FreeTools/FreeTools.WorkspaceInventory/FreeTools.WorkspaceInventory.csproj'
+              arguments: '--configuration Release --no-build -- "$(ProjectSourceDir)" "$(OutputDir)/workspace-inventory.csv"'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Run EndpointMapper'
+            inputs:
+              command: 'run'
+              projects: '$(FreeToolsDir)/FreeTools/FreeTools.EndpointMapper/FreeTools.EndpointMapper.csproj'
+              arguments: '--configuration Release --no-build -- "$(ProjectSourceDir)" "$(OutputDir)/pages.csv"'
+
+          # ============================================================
+          # Phase 4: Test Live Endpoints (Optional)
+          # ============================================================
+          - task: DotNetCoreCLI@2
+            displayName: 'Run EndpointPoker'
+            condition: and(succeeded(), eq('${{ parameters.skipScreenshots }}', 'false'))
+            inputs:
+              command: 'run'
+              projects: '$(FreeToolsDir)/FreeTools/FreeTools.EndpointPoker/FreeTools.EndpointPoker.csproj'
+              arguments: '--configuration Release --no-build'
+            env:
+              BASE_URL: '${{ parameters.testUrl }}'
+              CSV_PATH: '$(OutputDir)/pages.csv'
+              OUTPUT_DIR: '$(OutputDir)/snapshots'
+              MAX_threads: '${{ parameters.maxThreads }}'
+
+          # ============================================================
+          # Phase 5: Capture Screenshots (Optional)
+          # ============================================================
+          - task: PowerShell@2
+            displayName: 'Install Playwright Browsers'
+            condition: and(succeeded(), eq('${{ parameters.skipScreenshots }}', 'false'))
+            inputs:
+              targetType: 'inline'
+              script: |
+                $playwrightScript = Get-ChildItem -Path "$(FreeToolsDir)/FreeTools/FreeTools.BrowserSnapshot/bin/Release" -Filter "playwright.ps1" -Recurse | Select-Object -First 1
+                
+                if ($playwrightScript) {
+                  Write-Host "Installing Playwright browsers..."
+                  & pwsh $playwrightScript.FullName install chromium
+                } else {
+                  Write-Warning "Playwright script not found - browsers may not be installed"
+                  # Try npm fallback
+                  npx playwright install chromium --with-deps 2>$null
+                }
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Run BrowserSnapshot'
+            condition: and(succeeded(), eq('${{ parameters.skipScreenshots }}', 'false'))
+            inputs:
+              command: 'run'
+              projects: '$(FreeToolsDir)/FreeTools/FreeTools.BrowserSnapshot/FreeTools.BrowserSnapshot.csproj'
+              arguments: '--configuration Release --no-build'
+            env:
+              BASE_URL: '${{ parameters.testUrl }}'
+              CSV_PATH: '$(OutputDir)/pages.csv'
+              OUTPUT_DIR: '$(OutputDir)/snapshots'
+              MAX_THREADS: '${{ parameters.maxThreads }}'
+              PAGE_SETTLE_DELAY_MS: '${{ parameters.pageSettleDelayMs }}'
+              TEST_CREDENTIALS: '${{ parameters.testCredentials }}'
+
+          # ============================================================
+          # Phase 6: Generate Report
+          # ============================================================
+          - task: DotNetCoreCLI@2
+            displayName: 'Run WorkspaceReporter'
+            inputs:
+              command: 'run'
+              projects: '$(FreeToolsDir)/FreeTools/FreeTools.WorkspaceReporter/FreeTools.WorkspaceReporter.csproj'
+              arguments: '--configuration Release --no-build'
+            env:
+              REPO_ROOT: '$(ProjectSourceDir)'
+              OUTPUT_PATH: '$(OutputDir)/${{ parameters.projectName }}-Report.md'
+              WORKSPACE_CSV: '$(OutputDir)/workspace-inventory.csv'
+              PAGES_CSV: '$(OutputDir)/pages.csv'
+              SNAPSHOTS_DIR: '$(OutputDir)/snapshots'
+              TARGET_PROJECT: '${{ parameters.projectName }}'
+
+          # ============================================================
+          # Phase 7: Publish Results
+          # ============================================================
+          - task: PowerShell@2
+            displayName: 'Generate Summary'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host ""
+                Write-Host "=============================================="
+                Write-Host "  FreeTools Analysis Complete"
+                Write-Host "=============================================="
+                Write-Host ""
+                
+                $outputDir = "$(OutputDir)"
+                
+                # Check what was generated
+                if (Test-Path "$outputDir/${{ parameters.projectName }}-Report.md") {
+                  Write-Host "✓ Report generated: ${{ parameters.projectName }}-Report.md"
+                } else {
+                  Write-Host "✗ Report not found"
+                }
+                
+                if (Test-Path "$outputDir/workspace-inventory.csv") {
+                  $files = Import-Csv "$outputDir/workspace-inventory.csv"
+                  Write-Host "✓ Workspace inventory: $($files.Count) files analyzed"
+                }
+                
+                if (Test-Path "$outputDir/pages.csv") {
+                  $routes = Import-Csv "$outputDir/pages.csv"
+                  Write-Host "✓ Routes discovered: $($routes.Count) routes"
+                }
+                
+                $screenshots = Get-ChildItem -Path "$outputDir/snapshots" -Filter "*.png" -Recurse -ErrorAction SilentlyContinue
+                if ($screenshots) {
+                  Write-Host "✓ Screenshots captured: $($screenshots.Count) images"
+                }
+                
+                Write-Host ""
+                Write-Host "Output directory contents:"
+                Get-ChildItem -Path $outputDir -Recurse | Format-Table Name, Length -AutoSize
+                Write-Host ""
+                Write-Host "=============================================="
+          - task: PowerShell@2
+            displayName: 'Create Results Zip'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                $outputDir = "$(OutputDir)"
+                $zipName = "FreeTools-${{ parameters.projectName }}-$(Build.BuildNumber).zip"
+                $zipPath = "$(Build.ArtifactStagingDirectory)/$zipName"
+                
+                Write-Host "Creating zip archive..."
+                Write-Host "  Source: $outputDir"
+                Write-Host "  Destination: $zipPath"
+                
+                if (Test-Path $outputDir) {
+                  Compress-Archive -Path "$outputDir/*" -DestinationPath $zipPath -Force -CompressionLevel Optimal
+                  $zipSize = (Get-Item $zipPath).Length
+                  Write-Host "✓ Zip created: $zipName ($([math]::Round($zipSize/1MB, 2)) MB)"
+                  Write-Host "##vso[task.setvariable variable=ZipPath]$zipPath"
+                } else {
+                  Write-Warning "Output directory not found: $outputDir"
+                }
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish FreeTools Zip'
+            condition: always()
+            inputs:
+              PathtoPublish: '$(ZipPath)'
+              ArtifactName: 'FreeTools-${{ parameters.projectName }}'
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish FreeTools Report (Unzipped)'
+            condition: always()
+            inputs:
+              targetPath: '$(OutputDir)'
+              artifact: 'FreeTools-${{ parameters.projectName }}-Unzipped'
+              publishLocation: 'pipeline'
+
+          # ============================================================
+          # Phase 8: Cleanup
+          # ============================================================
+          - task: PowerShell@2
+            displayName: 'Cleanup Temp Files'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Clean up large temp directories
+                $dirsToClean = @(
+                  "$(FreeToolsDir)",
+                  "$(ExtractDir)",
+                  "$(Agent.TempDirectory)/artifacts"
+                )
+                
+                foreach ($dir in $dirsToClean) {
+                  if (Test-Path $dir) {
+                    Write-Host "Cleaning: $dir"
+                    Remove-Item -Path $dir -Recurse -Force -ErrorAction SilentlyContinue
+                  }
+                }
+                
+                Write-Host "Cleanup complete"

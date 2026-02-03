@@ -1,0 +1,20 @@
+{
+  "Route": "/ApiLogs/Dashboard",
+  "Url": "https://localhost:7271/ApiLogs/Dashboard",
+  "StatusCode": 200,
+  "FileSize": 19579,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": true,
+  "ConsoleErrors": [],
+  "CapturedAt": "2026-01-20T21:20:50.5452565Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}

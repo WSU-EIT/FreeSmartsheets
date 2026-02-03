@@ -1,0 +1,180 @@
+﻿# FreeTools Analysis Pipeline Template
+# Reusable template for analyzing Blazor projects and capturing screenshots
+#
+# Usage in your pipeline:
+#   - template: path/to/freetools-analyze.yml
+#     parameters:
+#       targetDirectory: 'src/MyBlazorApp'
+#       productionUrl: 'https://myapp.azurewebsites.net'
+#       reportName: 'MyBlazorApp'
+#
+# Developed by Enrollment Information Technology (EIT) at Washington State University
+# https://em.wsu.edu/eit/meet-our-staff/
+# https://github.com/WSU-EIT/FreeTools
+
+parameters:
+  # Required: Directory containing the Blazor project to analyze
+  - name: targetDirectory
+    type: string
+    
+  # Required: Production URL to test/screenshot (no trailing slash)
+  - name: productionUrl
+    type: string
+    
+  # Optional: Name for the report (defaults to directory name)
+  - name: reportName
+    type: string
+    default: ''
+    
+  # Optional: Git branch for output organization
+  - name: branchName
+    type: string
+    default: '$(Build.SourceBranchName)'
+    
+  # Optional: Output directory for reports
+  - name: outputDirectory
+    type: string
+    default: '$(Build.ArtifactStagingDirectory)/freetools-report'
+    
+  # Optional: Max parallel browser instances
+  - name: maxThreads
+    type: number
+    default: 5
+    
+  # Optional: Skip screenshots (faster, code analysis only)
+  - name: skipScreenshots
+    type: boolean
+    default: false
+    
+  # Optional: Skip HTTP endpoint testing
+  - name: skipEndpointPoker
+    type: boolean
+    default: false
+    
+  # Optional: Test credentials for auth pages (JSON format)
+  # Example: '{"email": "test@example.com", "password": "TestPass123!"}'
+  - name: testCredentials
+    type: string
+    default: ''
+    
+  # Optional: Page settle delay for SPAs (milliseconds)
+  - name: pageSettleDelayMs
+    type: number
+    default: 3000
+
+steps:
+  # Determine report name
+  - pwsh: |
+      $reportName = '${{ parameters.reportName }}'
+      if ([string]::IsNullOrEmpty($reportName)) {
+        $reportName = Split-Path '${{ parameters.targetDirectory }}' -Leaf
+      }
+      Write-Host "##vso[task.setvariable variable=ReportName]$reportName"
+      Write-Host "Report name: $reportName"
+    displayName: 'Determine report name'
+
+  # Clone FreeTools (or use as submodule)
+  - pwsh: |
+      if (-not (Test-Path 'FreeTools')) {
+        Write-Host "Cloning FreeTools..."
+        git clone --depth 1 https://github.com/WSU-EIT/FreeTools.git FreeTools
+      } else {
+        Write-Host "FreeTools already present"
+      }
+    displayName: 'Get FreeTools'
+
+  # Restore FreeTools
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore FreeTools'
+    inputs:
+      command: 'restore'
+      projects: 'FreeTools/FreeTools/**/*.csproj'
+
+  # Build FreeTools
+  - task: DotNetCoreCLI@2
+    displayName: 'Build FreeTools'
+    inputs:
+      command: 'build'
+      projects: 'FreeTools/FreeTools/**/*.csproj'
+      arguments: '--configuration Release --no-restore'
+
+  # Phase 1: WorkspaceInventory (analyze code)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run WorkspaceInventory'
+    inputs:
+      command: 'run'
+      projects: 'FreeTools/FreeTools/FreeTools.WorkspaceInventory/FreeTools.WorkspaceInventory.csproj'
+      arguments: '--configuration Release -- "${{ parameters.targetDirectory }}" "${{ parameters.outputDirectory }}/workspace-inventory.csv"'
+
+  # Phase 2: EndpointMapper (discover routes from code)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run EndpointMapper'
+    inputs:
+      command: 'run'
+      projects: 'FreeTools/FreeTools/FreeTools.EndpointMapper/FreeTools.EndpointMapper.csproj'
+      arguments: '--configuration Release -- "${{ parameters.targetDirectory }}" "${{ parameters.outputDirectory }}/pages.csv"'
+
+  # Phase 3: EndpointPoker (test live endpoints)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run EndpointPoker'
+    condition: and(succeeded(), eq('${{ parameters.skipEndpointPoker }}', 'false'))
+    inputs:
+      command: 'run'
+      projects: 'FreeTools/FreeTools/FreeTools.EndpointPoker/FreeTools.EndpointPoker.csproj'
+      arguments: '--configuration Release'
+    env:
+      BASE_URL: '${{ parameters.productionUrl }}'
+      CSV_PATH: '${{ parameters.outputDirectory }}/pages.csv'
+      OUTPUT_DIR: '${{ parameters.outputDirectory }}/snapshots'
+      MAX_THREADS: '${{ parameters.maxThreads }}'
+
+  # Phase 4: Install Playwright browsers
+  - pwsh: |
+      $playwrightPath = Get-ChildItem -Path "FreeTools/FreeTools/FreeTools.BrowserSnapshot/bin/Release" -Filter "playwright.ps1" -Recurse | Select-Object -First 1
+      if ($playwrightPath) {
+        Write-Host "Installing Playwright browsers..."
+        & pwsh $playwrightPath.FullName install chromium
+      } else {
+        Write-Host "##vso[task.logissue type=warning]Playwright script not found"
+      }
+    displayName: 'Install Playwright browsers'
+    condition: and(succeeded(), eq('${{ parameters.skipScreenshots }}', 'false'))
+
+  # Phase 5: BrowserSnapshot (capture screenshots from live site)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run BrowserSnapshot'
+    condition: and(succeeded(), eq('${{ parameters.skipScreenshots }}', 'false'))
+    inputs:
+      command: 'run'
+      projects: 'FreeTools/FreeTools/FreeTools.BrowserSnapshot/FreeTools.BrowserSnapshot.csproj'
+      arguments: '--configuration Release'
+    env:
+      BASE_URL: '${{ parameters.productionUrl }}'
+      CSV_PATH: '${{ parameters.outputDirectory }}/pages.csv'
+      OUTPUT_DIR: '${{ parameters.outputDirectory }}/snapshots'
+      MAX_THREADS: '${{ parameters.maxThreads }}'
+      PAGE_SETTLE_DELAY_MS: '${{ parameters.pageSettleDelayMs }}'
+      TEST_CREDENTIALS: '${{ parameters.testCredentials }}'
+
+  # Phase 6: WorkspaceReporter (generate report)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run WorkspaceReporter'
+    inputs:
+      command: 'run'
+      projects: 'FreeTools/FreeTools/FreeTools.WorkspaceReporter/FreeTools.WorkspaceReporter.csproj'
+      arguments: '--configuration Release'
+    env:
+      REPO_ROOT: '${{ parameters.targetDirectory }}'
+      OUTPUT_PATH: '${{ parameters.outputDirectory }}/$(ReportName)-Report.md'
+      WORKSPACE_CSV: '${{ parameters.outputDirectory }}/workspace-inventory.csv'
+      PAGES_CSV: '${{ parameters.outputDirectory }}/pages.csv'
+      SNAPSHOTS_DIR: '${{ parameters.outputDirectory }}/snapshots'
+      TARGET_PROJECT: '$(ReportName)'
+
+  # Publish report as artifact
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish FreeTools Report'
+    inputs:
+      targetPath: '${{ parameters.outputDirectory }}'
+      artifact: 'FreeTools-$(ReportName)-${{ parameters.branchName }}'
+      publishLocation: 'pipeline'

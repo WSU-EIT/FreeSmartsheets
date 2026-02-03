@@ -1,0 +1,55 @@
+﻿# Example: Analyze a Blazor app against production
+#
+# This pipeline demonstrates using FreeTools to:
+# 1. Analyze source code in the repo
+# 2. Test/screenshot a live production URL
+#
+# Developed by Enrollment Information Technology (EIT) at Washington State University
+# https://em.wsu.edu/eit/meet-our-staff/
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - 'src/MyBlazorApp/**'
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  # Your production URL (or staging)
+  productionUrl: 'https://myapp.azurewebsites.net'
+  
+  # Path to your Blazor project in the repo
+  blazorProjectPath: 'src/MyBlazorApp'
+
+stages:
+  - stage: Analyze
+    displayName: 'FreeTools Analysis'
+    jobs:
+      - job: AnalyzeAndScreenshot
+        displayName: 'Analyze Code & Capture Screenshots'
+        steps:
+          - checkout: self
+          
+          # Use the FreeTools template
+          - template: templates/freetools-analyze.yml
+            parameters:
+              targetDirectory: '$(Build.SourcesDirectory)/$(blazorProjectPath)'
+              productionUrl: '$(productionUrl)'
+              reportName: 'MyBlazorApp'
+              maxThreads: 5
+              pageSettleDelayMs: 3000
+              # Uncomment to skip screenshots (faster, code-only analysis)
+              # skipScreenshots: true
+              
+              # Uncomment to provide test credentials for auth pages
+              # testCredentials: '{"email": "$(TestEmail)", "password": "$(TestPassword)"}'

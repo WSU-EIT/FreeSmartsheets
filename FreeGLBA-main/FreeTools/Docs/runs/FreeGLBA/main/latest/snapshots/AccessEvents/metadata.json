@@ -1,0 +1,22 @@
+{
+  "Route": "/AccessEvents",
+  "Url": "https://localhost:7271/AccessEvents",
+  "StatusCode": 200,
+  "FileSize": 19783,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": true,
+  "ConsoleErrors": [
+    "Failed to load resource: the server responded with a status of 404 ()"
+  ],
+  "CapturedAt": "2026-01-20T21:20:50.5458067Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}

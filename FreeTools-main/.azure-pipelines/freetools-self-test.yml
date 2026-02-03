@@ -1,0 +1,351 @@
+﻿# freetools-self-test.yml
+#
+# Self-Test Pipeline for FreeTools
+# Tests FreeTools by analyzing its own BlazorApp1 sample project
+# and pointing at a live URL you specify.
+#
+# Usage:
+#   1. Push this repo to Azure DevOps
+#   2. Create a new pipeline using this file
+#   3. Set the TEST_URL variable to your deployed site
+#   4. Run the pipeline
+#
+# Developed by Enrollment Information Technology (EIT) at Washington State University
+# https://em.wsu.edu/eit/meet-our-staff/
+# https://github.com/WSU-EIT/FreeTools
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - 'FreeTools/**'
+      - 'BlazorApp1/**'
+
+pr:
+  branches:
+    include:
+      - main
+
+# Use your build pool - change as needed
+pool:
+  name: 'BuildVM'
+  # Or use Microsoft-hosted:
+  # vmImage: 'windows-latest'
+
+variables:
+  # Change this to your deployed test URL
+  TEST_URL: 'https://azuredev.em.wsu.edu/FreeCICD'
+  
+  # Project to analyze (BlazorApp1 is included in this repo)
+  PROJECT_NAME: 'BlazorApp1'
+  PROJECT_PATH: 'BlazorApp1'
+  
+  # Build configuration
+  BUILD_CONFIGURATION: 'Release'
+
+stages:
+  # ============================================================
+  # Stage 1: Build FreeTools
+  # ============================================================
+  - stage: BuildStage
+    displayName: 'Build FreeTools'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build and Create Source Snapshot'
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+
+          - task: PowerShell@2
+            displayName: 'Display Build Info'
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host "=============================================="
+                Write-Host "  FreeTools Self-Test Pipeline"
+                Write-Host "=============================================="
+                Write-Host ""
+                Write-Host "Repository:    $(Build.Repository.Name)"
+                Write-Host "Branch:        $(Build.SourceBranchName)"
+                Write-Host "Commit:        $(Build.SourceVersion)"
+                Write-Host "Build Number:  $(Build.BuildNumber)"
+                Write-Host "Test URL:      $(TEST_URL)"
+                Write-Host "Project:       $(PROJECT_NAME)"
+                Write-Host ""
+                Write-Host "=============================================="
+
+          # Create source snapshot (mimics build-template.yml)
+          - task: PowerShell@2
+            displayName: 'Create Source Snapshot (.zip)'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $projectPath = "$(Build.SourcesDirectory)/$(PROJECT_PATH)"
+                $outDir = "$(Build.ArtifactStagingDirectory)"
+                $zipPath = Join-Path $outDir "$(PROJECT_NAME).source.$(Build.BuildNumber).zip"
+
+                Write-Host "Creating source snapshot..."
+                Write-Host "  Source: $projectPath"
+                Write-Host "  Destination: $zipPath"
+
+                if (-not (Test-Path $projectPath)) {
+                  Write-Error "Project path not found: $projectPath"
+                  exit 1
+                }
+
+                # Exclude common folders
+                $exclude = @('.git', '.vs', 'bin', 'obj', 'node_modules')
+                $items = Get-ChildItem -LiteralPath $projectPath -Force
+                $includeItems = $items | Where-Object { $exclude -notcontains $_.Name }
+
+                if (-not (Test-Path $outDir)) {
+                  New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+                }
+
+                if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+                Compress-Archive -Path $includeItems.FullName -DestinationPath $zipPath -Force
+
+                Write-Host "✓ Source snapshot created: $zipPath"
+                Write-Host "  Size: $([math]::Round((Get-Item $zipPath).Length / 1KB, 2)) KB"
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Source Snapshot'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)/$(PROJECT_NAME).source.$(Build.BuildNumber).zip'
+              ArtifactName: '$(PROJECT_NAME).SourceSnapshot'
+
+          # Build FreeTools
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore FreeTools'
+            inputs:
+              command: 'restore'
+              projects: 'FreeTools/**/*.csproj'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build FreeTools'
+            inputs:
+              command: 'build'
+              projects: 'FreeTools/**/*.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-restore'
+
+  # ============================================================
+  # Stage 2: Run FreeTools Analysis
+  # ============================================================
+  - stage: AnalysisStage
+    displayName: 'FreeTools Analysis'
+    dependsOn: BuildStage
+    jobs:
+      - job: AnalysisJob
+        displayName: 'Analyze Code & Capture Screenshots'
+        
+        variables:
+          ExtractDir: '$(Agent.TempDirectory)/source'
+          OutputDir: '$(Build.ArtifactStagingDirectory)/freetools-report'
+          
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+
+          # Download source snapshot
+          - task: DownloadBuildArtifacts@1
+            displayName: 'Download Source Snapshot'
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: '$(PROJECT_NAME).SourceSnapshot'
+              downloadPath: '$(Agent.TempDirectory)/artifacts'
+
+          # Extract source
+          - task: PowerShell@2
+            displayName: 'Extract Source Snapshot'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $artifactDir = "$(Agent.TempDirectory)/artifacts/$(PROJECT_NAME).SourceSnapshot"
+                $extractDir = "$(ExtractDir)"
+                
+                $sourceZip = Get-ChildItem -Path $artifactDir -Filter "*.source.*.zip" | Select-Object -First 1
+                
+                if (-not $sourceZip) {
+                  Write-Error "Source snapshot zip not found"
+                  Get-ChildItem -Path $artifactDir -Recurse
+                  exit 1
+                }
+                
+                Write-Host "Extracting: $($sourceZip.FullName)"
+                New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+                Expand-Archive -Path $sourceZip.FullName -DestinationPath $extractDir -Force
+                
+                Write-Host "Extracted to: $extractDir"
+                Get-ChildItem -Path $extractDir | Format-Table Name
+
+          # Create output directory
+          - task: PowerShell@2
+            displayName: 'Create Output Directory'
+            inputs:
+              targetType: 'inline'
+              script: |
+                New-Item -ItemType Directory -Path "$(OutputDir)" -Force | Out-Null
+                New-Item -ItemType Directory -Path "$(OutputDir)/snapshots" -Force | Out-Null
+
+          # Restore and build FreeTools (needed for this job)
+          - task: DotNetCoreCLI@2
+            displayName: 'Restore FreeTools'
+            inputs:
+              command: 'restore'
+              projects: 'FreeTools/**/*.csproj'
+
+          - task: DotNetCoreCLI@2
+            displayName: 'Build FreeTools'
+            inputs:
+              command: 'build'
+              projects: 'FreeTools/**/*.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-restore'
+
+          # Run WorkspaceInventory
+          - task: DotNetCoreCLI@2
+            displayName: 'Run WorkspaceInventory'
+            inputs:
+              command: 'run'
+              projects: 'FreeTools/FreeTools.WorkspaceInventory/FreeTools.WorkspaceInventory.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-build -- "$(ExtractDir)" "$(OutputDir)/workspace-inventory.csv"'
+
+          # Run EndpointMapper
+          - task: DotNetCoreCLI@2
+            displayName: 'Run EndpointMapper'
+            inputs:
+              command: 'run'
+              projects: 'FreeTools/FreeTools.EndpointMapper/FreeTools.EndpointMapper.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-build -- "$(ExtractDir)" "$(OutputDir)/pages.csv"'
+
+          # Run EndpointPoker
+          - task: DotNetCoreCLI@2
+            displayName: 'Run EndpointPoker'
+            inputs:
+              command: 'run'
+              projects: 'FreeTools/FreeTools.EndpointPoker/FreeTools.EndpointPoker.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-build'
+            env:
+              BASE_URL: '$(TEST_URL)'
+              CSV_PATH: '$(OutputDir)/pages.csv'
+              OUTPUT_DIR: '$(OutputDir)/snapshots'
+              MAX_THREADS: '5'
+
+          # Install Playwright
+          - task: PowerShell@2
+            displayName: 'Install Playwright Browsers'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $playwrightScript = Get-ChildItem -Path "FreeTools/FreeTools.BrowserSnapshot/bin/$(BUILD_CONFIGURATION)" -Filter "playwright.ps1" -Recurse | Select-Object -First 1
+                
+                if ($playwrightScript) {
+                  Write-Host "Installing Playwright browsers..."
+                  & pwsh $playwrightScript.FullName install chromium
+                } else {
+                  Write-Warning "Playwright script not found"
+                  # List what we have
+                  Get-ChildItem -Path "FreeTools/FreeTools.BrowserSnapshot/bin" -Recurse -Filter "*.ps1"
+                }
+
+          # Run BrowserSnapshot
+          - task: DotNetCoreCLI@2
+            displayName: 'Run BrowserSnapshot'
+            inputs:
+              command: 'run'
+              projects: 'FreeTools/FreeTools.BrowserSnapshot/FreeTools.BrowserSnapshot.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-build'
+            env:
+              BASE_URL: '$(TEST_URL)'
+              CSV_PATH: '$(OutputDir)/pages.csv'
+              OUTPUT_DIR: '$(OutputDir)/snapshots'
+              MAX_THREADS: '5'
+              PAGE_SETTLE_DELAY_MS: '3000'
+
+          # Run WorkspaceReporter
+          - task: DotNetCoreCLI@2
+            displayName: 'Run WorkspaceReporter'
+            inputs:
+              command: 'run'
+              projects: 'FreeTools/FreeTools.WorkspaceReporter/FreeTools.WorkspaceReporter.csproj'
+              arguments: '--configuration $(BUILD_CONFIGURATION) --no-build'
+            env:
+              REPO_ROOT: '$(ExtractDir)'
+              OUTPUT_PATH: '$(OutputDir)/$(PROJECT_NAME)-Report.md'
+              WORKSPACE_CSV: '$(OutputDir)/workspace-inventory.csv'
+              PAGES_CSV: '$(OutputDir)/pages.csv'
+              SNAPSHOTS_DIR: '$(OutputDir)/snapshots'
+              TARGET_PROJECT: '$(PROJECT_NAME)'
+
+          # Generate summary
+          - task: PowerShell@2
+            displayName: 'Generate Summary'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host ""
+                Write-Host "=============================================="
+                Write-Host "  FreeTools Analysis Complete"
+                Write-Host "=============================================="
+                Write-Host ""
+                
+                $outputDir = "$(OutputDir)"
+                
+                if (Test-Path "$outputDir/$(PROJECT_NAME)-Report.md") {
+                  Write-Host "✓ Report generated"
+                }
+                
+                if (Test-Path "$outputDir/workspace-inventory.csv") {
+                  $files = Import-Csv "$outputDir/workspace-inventory.csv"
+                  Write-Host "✓ Files analyzed: $($files.Count)"
+                }
+                
+                if (Test-Path "$outputDir/pages.csv") {
+                  $routes = Import-Csv "$outputDir/pages.csv"
+                  Write-Host "✓ Routes discovered: $($routes.Count)"
+                }
+                
+                $screenshots = Get-ChildItem -Path "$outputDir/snapshots" -Filter "*.png" -Recurse -ErrorAction SilentlyContinue
+                Write-Host "✓ Screenshots: $($screenshots.Count)"
+                
+                Write-Host ""
+                Write-Host "=============================================="
+
+          # Create zip
+          - task: PowerShell@2
+            displayName: 'Create Results Zip'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                $outputDir = "$(OutputDir)"
+                $zipName = "FreeTools-$(PROJECT_NAME)-$(Build.BuildNumber).zip"
+                $zipPath = "$(Build.ArtifactStagingDirectory)/$zipName"
+                
+                if (Test-Path $outputDir) {
+                  Compress-Archive -Path "$outputDir/*" -DestinationPath $zipPath -Force -CompressionLevel Optimal
+                  $zipSize = (Get-Item $zipPath).Length
+                  Write-Host "✓ Zip created: $zipName ($([math]::Round($zipSize/1MB, 2)) MB)"
+                  Write-Host "##vso[task.setvariable variable=ZipPath]$zipPath"
+                }
+
+          # Publish zip artifact
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish FreeTools Results (Zip)'
+            condition: always()
+            inputs:
+              PathtoPublish: '$(ZipPath)'
+              ArtifactName: 'FreeTools-$(PROJECT_NAME)-Results'
+
+          # Publish unzipped for easy browsing
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish FreeTools Results (Unzipped)'
+            condition: always()
+            inputs:
+              targetPath: '$(OutputDir)'
+              artifact: 'FreeTools-$(PROJECT_NAME)-Browsable'
+              publishLocation: 'pipeline'

@@ -1,0 +1,20 @@
+{
+  "Route": "/DatabaseOffline",
+  "Url": "https://localhost:7271/DatabaseOffline",
+  "StatusCode": 200,
+  "FileSize": 30081,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": false,
+  "ConsoleErrors": [],
+  "CapturedAt": "2026-01-20T21:20:50.5452804Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}

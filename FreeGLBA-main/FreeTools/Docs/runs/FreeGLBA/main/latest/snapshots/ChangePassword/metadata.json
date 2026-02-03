@@ -1,0 +1,20 @@
+{
+  "Route": "/ChangePassword",
+  "Url": "https://localhost:7271/ChangePassword",
+  "StatusCode": 200,
+  "FileSize": 19493,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": true,
+  "ConsoleErrors": [],
+  "CapturedAt": "2026-01-20T21:20:50.5457975Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}

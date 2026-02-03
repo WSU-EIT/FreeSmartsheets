@@ -1,0 +1,20 @@
+{
+  "Route": "/ComplianceReports",
+  "Url": "https://localhost:7271/ComplianceReports",
+  "StatusCode": 200,
+  "FileSize": 19493,
+  "IsSuspiciouslySmall": false,
+  "RetryAttempted": true,
+  "ConsoleErrors": [],
+  "CapturedAt": "2026-01-20T21:20:50.5458135Z",
+  "IsSuccess": true,
+  "IsHttpError": false,
+  "IsError": false,
+  "ErrorMessage": null,
+  "RequiresAuth": false,
+  "AuthFlowCompleted": false,
+  "AuthStep1Path": null,
+  "AuthStep2Path": null,
+  "AuthStep3Path": null,
+  "AuthFlowNote": null
+}
